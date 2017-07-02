@@ -4,7 +4,7 @@
 !*/bests/
 !*/trained_models/
 */trained_models/*
-!dnn_and_xgboost/trained_models/.gitkeep
+!*/trained_models/.gitkeep
 */src/*.pyc
 */src/.~*
 */src/__*
@@ -14,8 +14,5 @@
 !data/.gitkeep
 
 */src/.ipynb_checkpoints/
-
-trained_models/
-!trained_models/pcvr_model_last.h5
 
 nohup*

@@ -18,7 +18,7 @@ parser.add_argument('-f', type=int, default=24,
     help='the f most important independent features (<=24)')
 parser.add_argument('-v', type=int, default=1,
     help='verbose')
-parser.add_argument('-b', type=int, default=4096,
+parser.add_argument('-b', type=int, default=1048,
     help='batch size')
 parser.add_argument('--opt', type=str, default='adagrad',
     help='batch size')
@@ -219,11 +219,11 @@ for e in range(args.e):
         print('%d/%d\t - Time: %ds\t - Loss: %.4f'%(trained, len_tr, int(time()-start), logs), end='\r')
         # sys.stdout.flush()
 
-        if trained > 1000: 
-            print(trained)
-            break
+        # if trained > 10000: 
+        #     print(trained)
+        #     break
 
-
+model.save('../trained_models/%smobai_model.h5' % strftime('%H%M_%m%d_'))
 
 # ======================================================================================================== #
 # 4 test
@@ -234,12 +234,13 @@ print('\nTesting')
 len_te = len(te_x)
 idxs = None
 tested = 0
-for te_xb in batch_generator(te_x, batch_size=1024*4):
+start = time()
+for te_xb in batch_generator(te_x, batch_size=1024*16):
     tested += len(te_xb[0])
     preds_b = model.predict_on_batch(te_xb)
     idxs_b = (-preds_b).argsort()[:, :3]
     idxs = idxs_b if idxs is None else np.vstack((idxs, idxs_b))
-    print('Tested %d/%d'%(tested, len_te), end='\r')
+    print('Tested %d/%d\t - Time: %ds'%(tested, len_te, int(time()-start)), end='\r')
     sys.stdout.flush()
     
 submission = pd.DataFrame(idxs).apply(le.inverse_transform)
@@ -252,3 +253,7 @@ print(submission.head())
 submission = submission[['orderid', 0, 1, 2]]
 
 submission.to_csv('../../results/%s_submission'%strftime('%H%M_%m%d'), header=None, index=None)
+
+
+# ======================================================================================================== #
+os.system('setterm -cursor on')
