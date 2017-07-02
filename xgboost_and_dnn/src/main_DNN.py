@@ -58,16 +58,19 @@ g.add_argument('-olv', action='store_true',
 args = parser.parse_args()
 print(args)
 import os
+import sys
 import shutil
 import json
 import datetime
 import math
 import functools
+import pickle
 import numpy as np
 import pandas as pd
 from time import time, strftime
 from collections import Counter
 from keras import backend as K
+from keras.metrics import top_k_categorical_accuracy
 from keras.models import load_model, Sequential, Model
 from keras.utils import plot_model, to_categorical
 from keras.callbacks import TensorBoard, ModelCheckpoint, Callback
@@ -75,6 +78,7 @@ from keras.layers import Dense, Embedding, LSTM, GRU, SimpleRNN, BatchNormalizat
 from keras.layers import Dropout, Bidirectional, Flatten, Input, Reshape
 from keras.layers.merge import Concatenate, Add, concatenate, add
 from keras.optimizers import rmsprop, sgd, adam, adagrad
+os.system('setterm -cursor off')
 
 def s_c(x):
     return [x[:, i:i+1] for i in range(len(x[0]))]
@@ -110,6 +114,17 @@ class predCallback(Callback):
         print('\nTr avg: %.4f,   avg: %.4f, std: %.4f, written to: %s\n'%(tr_avg, avg, std, p))
 
 
+
+def batch_generator(x, y=None, batch_size=args.b):
+    nb_batch = np.ceil(len(x)/batch_size)
+    if y is None:
+        for xb in np.array_split(x, nb_batch):
+            yield s_c(xb)
+    else:
+        for xb,yb in zip(np.array_split(x, nb_batch), np.array_split(y, nb_batch)):
+            yb = to_categorical(yb, 110527)
+            yield s_c(xb), yb
+
 # ======================================================================================================== #
 # 1 data
 # ======================================================================================================== #
@@ -117,6 +132,7 @@ te = pd.read_csv('../data/test_new.csv')
 tr = pd.read_csv('../data/train_new.csv')
 va = tr[tr.d >= 22]
 tr = tr.drop(va.index)
+tr = tr.sample(frac=1)
 
 features = ['userid', 'bikeid', 'biketype', 'wd', 'd', 'h', 'm', 'start']
 
@@ -126,8 +142,8 @@ te_x = te[features].values
 tr_y = tr.end.values
 va_y = va.end.values
 
-tr_y = to_categorical(tr_y, 110527)
-va_y = to_categorical(va_y, 110527)
+# tr_y = to_categorical(tr_y, 110527)
+# va_y = to_categorical(va_y, 110527)
 
 # ======================================================================================================== #
 # 2 model
@@ -137,8 +153,9 @@ max_fs = pd.concat([tr[features], te[features]]).max().values +1
 ins = [Input(shape=(1, )) for _ in range(len(features))]
 cols_outs = []
 for i,inp in enumerate(ins):
-	out = Embedding(max_fs[i], 16)(inp)
-	cols_outs.append(out)
+    out = Embedding(max_fs[i], 16)(inp)
+    out = Flatten()(out)
+    cols_outs.append(out)
 
 cols_out = concatenate(cols_outs)
 if args.mt == 0:
@@ -169,38 +186,69 @@ if args.mt == 4:
     y = Dense(512, activation='relu')(y)
     y = Dense(512, activation='tanh')(y)
 
+if args.mt == 5:
+    y = cols_out
 
 y = Dense(110527, activation='softmax')(y)  
 model = Model(ins, y)
-# ======================================================================================================== #
-# 4 compile and train
-# ======================================================================================================== #
-top3_acc = functools.partial(keras.metrics.top_k_categorical_accuracy, k=3)
+model.summary()
+
+top3_acc = functools.partial(top_k_categorical_accuracy, k=3)
 
 model.compile(optimizer='adagrad', 
-			  loss='categorical_crossentropy', 
-			  metrics=[top3_acc, 'categorical_crossentropy'])
+              loss='categorical_crossentropy', 
+              # metrics=[top3_acc, 'categorical_crossentropy']
+              )
+# ======================================================================================================== #
+# 4 train
+# ======================================================================================================== #
 
-model.fit(tr_x, tr_y, epochs=args.e, batch_size=args.b,
-		  validation_data=(va_x, va_y),
-		  shuffle=True,
-		  )
+# model.fit(tr_x, tr_y, epochs=args.e, batch_size=args.b,
+#         validation_data=(va_x, va_y),
+#         shuffle=True,
+#         )
+print('\n\nStart training')
+len_tr = len(tr_y)
+for e in range(args.e):
+    trained = 0
+    print('\n\n--------- Epoch ', e)
+    start = time()
+    for tr_xyb in batch_generator(tr_x, tr_y):
+        logs = model.train_on_batch(*tr_xyb)
+        trained += len(tr_xyb[1])
+        print('%d/%d\t - Time: %ds\t - Loss: %.4f'%(trained, len_tr, int(time()-start), logs), end='\r')
+        # sys.stdout.flush()
+
+        if trained > 1000: 
+            print(trained)
+            break
+
+
 
 # ======================================================================================================== #
 # 4 test
 # ======================================================================================================== #
 le = pickle.load(open('../data/laberEncoder', 'rb'))
 
-preds = model.predict(te_x, batch_size=args.b*32, verbose=1)
-
-idxs = (-preds).argsort()[:, :n]
-
+print('\nTesting')
+len_te = len(te_x)
+idxs = None
+tested = 0
+for te_xb in batch_generator(te_x, batch_size=1024*4):
+    tested += len(te_xb[0])
+    preds_b = model.predict_on_batch(te_xb)
+    idxs_b = (-preds_b).argsort()[:, :3]
+    idxs = idxs_b if idxs is None else np.vstack((idxs, idxs_b))
+    print('Tested %d/%d'%(tested, len_te), end='\r')
+    sys.stdout.flush()
+    
 submission = pd.DataFrame(idxs).apply(le.inverse_transform)
 
-assert len(submission) == len(te)
+# assert len(submission) == len(te)
 
 submission['orderid'] = te.orderid
+print(submission.head())
 
 submission = submission[['orderid', 0, 1, 2]]
 
-submission.to_csv('../../results/%s_ubmission'%strftime('%H%M_%m%d'), header=None, index=None)
+submission.to_csv('../../results/%s_submission'%strftime('%H%M_%m%d'), header=None, index=None)
