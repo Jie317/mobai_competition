@@ -2,7 +2,7 @@
 
 # Script to samplify the commit and push steps. All the arguments are concatenated as the commmit message.
 
-git add -A
+git add -A :/
 git status
 if [ $# -eq 0 ]; then
 	echo "Warning: Using default message: update"
